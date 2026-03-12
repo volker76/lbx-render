@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/LbxRender/LbxRender.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/LbxRender.Tests/LbxRender.Tests.csproj" />
+  </Folder>
+</Solution>
