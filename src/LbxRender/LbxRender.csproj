@@ -8,11 +8,11 @@
     <!-- NuGet Package Properties -->
     <PackageId>LbxRender</PackageId>
     <Version>0.1.0</Version>
-    <Authors>haensel</Authors>
+    <Authors>volker76</Authors>
     <Description>Parse .lbx label files and render them as PNG/JPEG/BMP/TIFF images</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageTags>lbx;label;render;image;bitmap</PackageTags>
-    <RepositoryUrl>https://github.com/haensel/lbx-render</RepositoryUrl>
+    <RepositoryUrl>https://github.com/volker76/lbx-render</RepositoryUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
