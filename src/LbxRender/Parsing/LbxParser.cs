@@ -10,22 +10,38 @@ internal static class LbxParser
         using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
         var label = new LbxLabel();
 
-        // Parse prop.xml
-        var propEntry = archive.GetEntry("prop.xml");
-        if (propEntry is not null)
-        {
-            using var propStream = propEntry.Open();
-            label.Properties = PropXmlReader.Parse(propStream);
-        }
-
-        // Parse label.xml
+        // Parse label.xml first — it contains both paper dimensions and elements
         var labelEntry = archive.GetEntry("label.xml");
         if (labelEntry is not null)
         {
             using var labelStream = labelEntry.Open();
-            var elements = LabelXmlReader.Parse(labelStream);
-            foreach (var el in elements)
+            var result = LabelXmlReader.Parse(labelStream);
+
+            // Apply paper dimensions from label.xml
+            label.Properties.LabelWidthPt = result.Properties.LabelWidthPt;
+            label.Properties.LabelHeightPt = result.Properties.LabelHeightPt;
+            label.Properties.MarginLeft = result.Properties.MarginLeft;
+            label.Properties.MarginTop = result.Properties.MarginTop;
+            label.Properties.MarginRight = result.Properties.MarginRight;
+            label.Properties.MarginBottom = result.Properties.MarginBottom;
+            label.Properties.Orientation = result.Properties.Orientation;
+            label.Properties.MediaType = result.Properties.MediaType;
+            label.Properties.PaperColor = result.Properties.PaperColor;
+            label.Properties.PaperInk = result.Properties.PaperInk;
+            label.Properties.PrinterModel = result.Properties.PrinterModel;
+
+            foreach (var el in result.Elements)
                 label.Elements.Add(el);
+        }
+
+        // Parse prop.xml — metadata only (title, creator)
+        var propEntry = archive.GetEntry("prop.xml");
+        if (propEntry is not null)
+        {
+            using var propStream = propEntry.Open();
+            var metaProps = PropXmlReader.Parse(propStream);
+            label.Properties.Title = metaProps.Title;
+            label.Properties.Creator = metaProps.Creator;
         }
 
         // Extract embedded images

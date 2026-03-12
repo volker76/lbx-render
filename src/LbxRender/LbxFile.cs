@@ -8,7 +8,7 @@ public static class LbxFile
 {
     public static LbxLabel Open(string path)
     {
-        using var stream = File.OpenRead(path);
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
         return Open(stream);
     }
 

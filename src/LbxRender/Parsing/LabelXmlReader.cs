@@ -1,7 +1,10 @@
+using System.Globalization;
 using System.Xml.Linq;
 using LbxRender.Models;
 
 namespace LbxRender.Parsing;
+
+internal record LabelParseResult(LbxProperties Properties, List<LbxElement> Elements);
 
 internal static class LabelXmlReader
 {
@@ -12,37 +15,74 @@ internal static class LabelXmlReader
     private static readonly XNamespace ImageNs = "http://schemas.brother.info/ptouch/2007/lbx/image";
     private static readonly XNamespace BarcodeNs = "http://schemas.brother.info/ptouch/2007/lbx/barcode";
 
-    public static List<LbxElement> Parse(Stream stream)
+    public static LabelParseResult Parse(Stream stream)
     {
         var doc = XDocument.Load(stream);
+        var props = new LbxProperties();
         var elements = new List<LbxElement>();
 
-        foreach (var obj in doc.Descendants(PtNs + "objectStyle").Select(os => os.Parent).Where(p => p is not null))
+        // Extract paper dimensions from style:paper in style:sheet
+        var paper = doc.Descendants(StyleNs + "paper").FirstOrDefault();
+        if (paper is not null)
         {
-            var element = ParseElement(obj!);
-            if (element is not null)
-                elements.Add(element);
+            props.LabelWidthPt = Pt(paper.Attribute("width")?.Value);
+            props.LabelHeightPt = Pt(paper.Attribute("height")?.Value);
+            props.MarginLeft = Pt(paper.Attribute("marginLeft")?.Value);
+            props.MarginTop = Pt(paper.Attribute("marginTop")?.Value);
+            props.MarginRight = Pt(paper.Attribute("marginRight")?.Value);
+            props.MarginBottom = Pt(paper.Attribute("marginBottom")?.Value);
+            props.Orientation = paper.Attribute("orientation")?.Value ?? "portrait";
+            props.MediaType = paper.Attribute("media")?.Value;
+            props.PaperColor = paper.Attribute("paperColor")?.Value;
+            props.PaperInk = paper.Attribute("paperInk")?.Value;
+            props.PrinterModel = paper.Attribute("printerName")?.Value;
         }
 
-        return elements;
+        // Parse objects from pt:objects
+        var objects = doc.Descendants(PtNs + "objects").FirstOrDefault();
+        if (objects is not null)
+        {
+            foreach (var child in objects.Elements())
+            {
+                var element = ParseElement(child);
+                if (element is not null)
+                    elements.Add(element);
+            }
+        }
+
+        return new LabelParseResult(props, elements);
     }
 
     private static LbxElement? ParseElement(XElement obj)
     {
-        var objectStyle = obj.Element(PtNs + "objectStyle");
+        var localName = obj.Name.LocalName;
+        var ns = obj.Name.Namespace;
+
         LbxElement? element = null;
 
-        if (obj.Element(TextNs + "text") is not null || obj.Name.LocalName == "text")
+        if (ns == TextNs && localName == "text")
             element = ParseTextElement(obj);
-        else if (obj.Element(ImageNs + "image") is not null || obj.Name.LocalName == "image")
-            element = ParseImageElement(obj);
-        else if (obj.Element(BarcodeNs + "barcode") is not null || obj.Name.LocalName == "barcode")
+        else if (ns == DrawNs && localName == "rect")
+            element = ParseRectElement(obj);
+        else if (ns == DrawNs && localName == "poly")
+            element = ParsePolyElement(obj);
+        else if (ns == DrawNs && localName == "frame")
+            element = ParseFrameElement(obj);
+        else if (ns == BarcodeNs && localName == "barcode")
             element = ParseBarcodeElement(obj);
-        else if (obj.Element(DrawNs + "rectangle") is not null || obj.Element(DrawNs + "line") is not null || obj.Element(DrawNs + "ellipse") is not null)
-            element = ParseShapeElement(obj);
+        else if (ns == ImageNs && localName == "clipart")
+            element = ParseClipartElement(obj);
+        else if (ns == ImageNs && localName == "image")
+            element = ParseImageElement(obj);
+        else if (ns == ImageNs && localName == "picture")
+            element = ParsePictureElement(obj);
 
-        if (element is not null && objectStyle is not null)
-            ApplyObjectStyle(element, objectStyle);
+        if (element is not null)
+        {
+            var objectStyle = obj.Element(PtNs + "objectStyle");
+            if (objectStyle is not null)
+                ApplyObjectStyle(element, objectStyle);
+        }
 
         return element;
     }
@@ -51,65 +91,293 @@ internal static class LabelXmlReader
     {
         var te = new TextElement();
 
-        var textNode = obj.Element(TextNs + "text") ?? obj;
-        var spans = textNode.Descendants(TextNs + "span");
-        te.Text = string.Join("", spans.Select(s => s.Value));
-        if (string.IsNullOrEmpty(te.Text))
-            te.Text = textNode.Value;
+        // Text content is in pt:data
+        var dataEl = obj.Element(PtNs + "data");
+        te.Text = dataEl?.Value ?? string.Empty;
 
-        var font = obj.Descendants(TextNs + "font").FirstOrDefault()
-                   ?? obj.Descendants(StyleNs + "font").FirstOrDefault();
-        if (font is not null)
+        // Default font from text:ptFontInfo (top-level, before stringItems)
+        var fontInfo = obj.Element(TextNs + "ptFontInfo");
+        if (fontInfo is not null)
+            ApplyFontInfo(te, fontInfo);
+
+        // Text alignment
+        var align = obj.Element(TextNs + "textAlign");
+        if (align is not null)
         {
-            te.FontFamily = font.Attribute("name")?.Value ?? te.FontFamily;
-            if (float.TryParse(font.Attribute("size")?.Value, out var size))
-                te.FontSize = size;
+            te.HorizontalAlignment = align.Attribute("horizontalAlignment")?.Value ?? "LEFT";
+            te.VerticalAlignment = align.Attribute("verticalAlignment")?.Value ?? "TOP";
+        }
+
+        // Text control
+        var control = obj.Element(TextNs + "textControl");
+        if (control is not null)
+            te.TextControl = control.Attribute("control")?.Value ?? "FREE";
+
+        // Parse spans (text:stringItem elements)
+        foreach (var stringItem in obj.Elements(TextNs + "stringItem"))
+        {
+            var span = new TextSpan();
+            var charLenAttr = stringItem.Attribute("charLen")?.Value;
+            if (int.TryParse(charLenAttr, out var charLen))
+                span.CharLength = charLen;
+
+            var spanFontInfo = stringItem.Element(TextNs + "ptFontInfo");
+            if (spanFontInfo is not null)
+                ApplyFontInfoToSpan(span, spanFontInfo);
+
+            te.Spans.Add(span);
         }
 
         return te;
     }
 
-    private static ImageElement ParseImageElement(XElement obj)
+    private static void ApplyFontInfo(TextElement te, XElement fontInfo)
     {
-        var ie = new ImageElement();
-        var img = obj.Element(ImageNs + "image") ?? obj;
-        ie.FileName = img.Attribute("src")?.Value
-                      ?? img.Attribute("fileName")?.Value
-                      ?? string.Empty;
-        return ie;
+        var logFont = fontInfo.Element(TextNs + "logFont");
+        if (logFont is not null)
+        {
+            te.FontFamily = logFont.Attribute("name")?.Value ?? te.FontFamily;
+            te.Italic = logFont.Attribute("italic")?.Value == "true";
+            var weightStr = logFont.Attribute("weight")?.Value;
+            if (int.TryParse(weightStr, out var weight))
+                te.Bold = weight >= 700;
+        }
+
+        var fontExt = fontInfo.Element(TextNs + "fontExt");
+        if (fontExt is not null)
+        {
+            te.FontSize = Pt(fontExt.Attribute("size")?.Value);
+            if (te.FontSize <= 0)
+                te.FontSize = 12f;
+            te.Color = fontExt.Attribute("textColor")?.Value ?? te.Color;
+            te.TextEffect = fontExt.Attribute("effect")?.Value ?? "NOEFFECT";
+            te.Underline = fontExt.Attribute("underline")?.Value != "0"
+                           && fontExt.Attribute("underline")?.Value is not null
+                           && fontExt.Attribute("underline")?.Value != "0";
+            te.Underline = fontExt.Attribute("underline")?.Value is not null and not "0";
+            te.Strikeout = fontExt.Attribute("strikeout")?.Value is not null and not "0";
+        }
+    }
+
+    private static void ApplyFontInfoToSpan(TextSpan span, XElement fontInfo)
+    {
+        var logFont = fontInfo.Element(TextNs + "logFont");
+        if (logFont is not null)
+        {
+            span.FontFamily = logFont.Attribute("name")?.Value ?? span.FontFamily;
+            span.Italic = logFont.Attribute("italic")?.Value == "true";
+            var weightStr = logFont.Attribute("weight")?.Value;
+            if (int.TryParse(weightStr, out var weight))
+                span.Weight = weight;
+        }
+
+        var fontExt = fontInfo.Element(TextNs + "fontExt");
+        if (fontExt is not null)
+        {
+            span.FontSize = Pt(fontExt.Attribute("size")?.Value);
+            span.Color = fontExt.Attribute("textColor")?.Value ?? span.Color;
+            span.Effect = fontExt.Attribute("effect")?.Value ?? "NOEFFECT";
+            span.Underline = fontExt.Attribute("underline")?.Value is not null and not "0";
+            span.Strikeout = fontExt.Attribute("strikeout")?.Value is not null and not "0";
+        }
+    }
+
+    private static ShapeElement ParseRectElement(XElement obj)
+    {
+        var se = new ShapeElement();
+
+        var rectStyle = obj.Element(DrawNs + "rectStyle");
+        if (rectStyle is not null)
+        {
+            var shape = rectStyle.Attribute("shape")?.Value ?? "RECTANGLE";
+            se.ShapeType = shape switch
+            {
+                "ROUNDRECTANGLE" => ShapeType.RoundedRectangle,
+                "ELLIPSE" => ShapeType.Ellipse,
+                _ => ShapeType.Rectangle
+            };
+            se.RoundnessX = Pt(rectStyle.Attribute("roundnessX")?.Value);
+            se.RoundnessY = Pt(rectStyle.Attribute("roundnessY")?.Value);
+        }
+
+        return se;
+    }
+
+    private static ShapeElement ParsePolyElement(XElement obj)
+    {
+        var se = new ShapeElement();
+
+        var polyStyle = obj.Element(DrawNs + "polyStyle");
+        if (polyStyle is not null)
+        {
+            var shape = polyStyle.Attribute("shape")?.Value ?? "POLYGON";
+            se.ShapeType = shape switch
+            {
+                "LINE" => ShapeType.Line,
+                "POLYLINE" => ShapeType.Polyline,
+                _ => ShapeType.Polygon
+            };
+            se.ArrowBegin = polyStyle.Attribute("arrowBegin")?.Value ?? "SQUARE";
+            se.ArrowEnd = polyStyle.Attribute("arrowEnd")?.Value ?? "SQUARE";
+
+            // Parse points
+            var pointsEl = polyStyle.Element(DrawNs + "polyLinePoints");
+            if (pointsEl is not null)
+            {
+                var pointsStr = pointsEl.Attribute("points")?.Value;
+                if (!string.IsNullOrEmpty(pointsStr))
+                    ParsePoints(se, pointsStr);
+            }
+        }
+
+        return se;
+    }
+
+    private static void ParsePoints(ShapeElement se, string pointsStr)
+    {
+        // Format: "x1pt,y1pt x2pt,y2pt ..."
+        var pairs = pointsStr.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        foreach (var pair in pairs)
+        {
+            var coords = pair.Split(',');
+            if (coords.Length == 2)
+            {
+                var x = Pt(coords[0]);
+                var y = Pt(coords[1]);
+                se.Points.Add((x, y));
+            }
+        }
+    }
+
+    private static FrameElement ParseFrameElement(XElement obj)
+    {
+        var fe = new FrameElement();
+
+        var frameStyle = obj.Element(DrawNs + "frameStyle");
+        if (frameStyle is not null)
+        {
+            fe.Category = frameStyle.Attribute("category")?.Value ?? "SIMPLE";
+            fe.Style = frameStyle.Attribute("style")?.Value ?? "0";
+            fe.StretchCenter = frameStyle.Attribute("stretchCenter")?.Value == "true";
+        }
+
+        return fe;
     }
 
     private static BarcodeElement ParseBarcodeElement(XElement obj)
     {
         var be = new BarcodeElement();
-        var bc = obj.Element(BarcodeNs + "barcode") ?? obj;
-        be.Protocol = bc.Attribute("protocol")?.Value ?? string.Empty;
-        be.Data = bc.Attribute("data")?.Value ?? bc.Value;
+
+        // Protocol and settings from barcode:barcodeStyle
+        var bcStyle = obj.Element(BarcodeNs + "barcodeStyle");
+        if (bcStyle is not null)
+        {
+            be.Protocol = bcStyle.Attribute("protocol")?.Value ?? string.Empty;
+            be.BarWidth = Pt(bcStyle.Attribute("barWidth")?.Value);
+            be.BarRatio = bcStyle.Attribute("barRatio")?.Value ?? "1:3";
+            be.HumanReadable = bcStyle.Attribute("humanReadable")?.Value == "true";
+            be.HumanReadableAlignment = bcStyle.Attribute("humanReadableAlignment")?.Value ?? "LEFT";
+            be.CheckDigit = bcStyle.Attribute("checkDigit")?.Value == "true";
+        }
+
+        // QR-specific
+        var qrStyle = obj.Element(BarcodeNs + "qrcodeStyle");
+        if (qrStyle is not null)
+        {
+            be.QrModel = qrStyle.Attribute("model")?.Value;
+            be.QrEccLevel = qrStyle.Attribute("eccLevel")?.Value;
+            be.QrCellSize = Pt(qrStyle.Attribute("cellSize")?.Value);
+        }
+
+        // DataMatrix-specific
+        var dmStyle = obj.Element(BarcodeNs + "datamatrixStyle");
+        if (dmStyle is not null)
+        {
+            be.DmModel = dmStyle.Attribute("model")?.Value;
+            be.DmCellSize = Pt(dmStyle.Attribute("cellSize")?.Value);
+        }
+
+        // Data from pt:data
+        var dataEl = obj.Element(PtNs + "data");
+        be.Data = dataEl?.Value ?? string.Empty;
+
         return be;
     }
 
-    private static ShapeElement ParseShapeElement(XElement obj)
+    private static ImageElement ParseClipartElement(XElement obj)
     {
-        var se = new ShapeElement();
-        if (obj.Element(DrawNs + "line") is not null)
-            se.ShapeType = ShapeType.Line;
-        else if (obj.Element(DrawNs + "ellipse") is not null)
-            se.ShapeType = ShapeType.Ellipse;
-        return se;
+        var ie = new ImageElement { ImageType = ImageType.Clipart };
+
+        var clipartStyle = obj.Element(ImageNs + "clipartStyle");
+        if (clipartStyle is not null)
+        {
+            ie.ClipartOriginalName = clipartStyle.Attribute("originalName")?.Value;
+            var cat = clipartStyle.Element(ImageNs + "category");
+            ie.ClipartCategory = cat?.Attribute("categoryName")?.Value;
+        }
+
+        return ie;
+    }
+
+    private static ImageElement ParseImageElement(XElement obj)
+    {
+        var ie = new ImageElement { ImageType = ImageType.EmbeddedBitmap };
+
+        var imageStyle = obj.Element(ImageNs + "imageStyle");
+        if (imageStyle is not null)
+            ie.FileName = imageStyle.Attribute("fileName")?.Value ?? string.Empty;
+
+        return ie;
+    }
+
+    private static ImageElement ParsePictureElement(XElement obj)
+    {
+        var ie = new ImageElement { ImageType = ImageType.Picture };
+
+        var pictureStyle = obj.Element(ImageNs + "pictureStyle");
+        if (pictureStyle is not null)
+        {
+            ie.PictureCategory = pictureStyle.Attribute("category")?.Value;
+            ie.PictureValue = pictureStyle.Attribute("value")?.Value;
+        }
+
+        return ie;
     }
 
     private static void ApplyObjectStyle(LbxElement element, XElement objectStyle)
     {
-        element.ObjectName = objectStyle.Attribute("name")?.Value;
-        if (float.TryParse(objectStyle.Attribute("x")?.Value, out var x))
-            element.X = x;
-        if (float.TryParse(objectStyle.Attribute("y")?.Value, out var y))
-            element.Y = y;
-        if (float.TryParse(objectStyle.Attribute("width")?.Value, out var w))
-            element.Width = w;
-        if (float.TryParse(objectStyle.Attribute("height")?.Value, out var h))
-            element.Height = h;
-        if (float.TryParse(objectStyle.Attribute("rotation")?.Value, out var r))
-            element.Rotation = r;
+        element.X = Pt(objectStyle.Attribute("x")?.Value);
+        element.Y = Pt(objectStyle.Attribute("y")?.Value);
+        element.Width = Pt(objectStyle.Attribute("width")?.Value);
+        element.Height = Pt(objectStyle.Attribute("height")?.Value);
+        element.Rotation = Pt(objectStyle.Attribute("angle")?.Value);
+        element.BackColor = objectStyle.Attribute("backColor")?.Value;
+
+        // Pen
+        var pen = objectStyle.Element(PtNs + "pen");
+        if (pen is not null)
+        {
+            element.PenStyle = pen.Attribute("style")?.Value ?? "NULL";
+            element.PenColor = pen.Attribute("color")?.Value ?? "#000000";
+            element.PenWidthX = Pt(pen.Attribute("widthX")?.Value);
+            element.PenWidthY = Pt(pen.Attribute("widthY")?.Value);
+        }
+
+        // Brush
+        var brush = objectStyle.Element(PtNs + "brush");
+        if (brush is not null)
+        {
+            element.BrushStyle = brush.Attribute("style")?.Value ?? "NULL";
+            element.BrushColor = brush.Attribute("color")?.Value ?? "#000000";
+            if (int.TryParse(brush.Attribute("id")?.Value, out var brushId))
+                element.BrushPatternId = brushId;
+        }
+
+        // Object name from pt:expanded
+        var expanded = objectStyle.Element(PtNs + "expanded");
+        if (expanded is not null)
+            element.ObjectName = expanded.Attribute("objectName")?.Value;
     }
+
+    private static float Pt(string? value) => PtValueParser.Parse(value);
 }

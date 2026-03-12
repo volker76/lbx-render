@@ -3,14 +3,22 @@ namespace LbxRender.Models;
 public class ShapeElement : LbxElement
 {
     public ShapeType ShapeType { get; set; } = ShapeType.Rectangle;
-    public string StrokeColor { get; set; } = "#000000";
-    public float StrokeWidth { get; set; } = 1f;
-    public string? FillColor { get; set; }
+    public float RoundnessX { get; set; }
+    public float RoundnessY { get; set; }
+
+    /// <summary>Points for polygon/polyline shapes (in absolute pt coordinates).</summary>
+    public List<(float X, float Y)> Points { get; } = [];
+
+    public string ArrowBegin { get; set; } = "SQUARE";
+    public string ArrowEnd { get; set; } = "SQUARE";
 }
 
 public enum ShapeType
 {
     Rectangle,
+    RoundedRectangle,
+    Ellipse,
     Line,
-    Ellipse
+    Polygon,
+    Polyline
 }
