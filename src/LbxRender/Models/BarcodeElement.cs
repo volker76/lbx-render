@@ -9,6 +9,7 @@ public class BarcodeElement : LbxElement
     public bool HumanReadable { get; set; }
     public string HumanReadableAlignment { get; set; } = "LEFT";
     public bool CheckDigit { get; set; }
+    public bool Margin { get; set; } = true;
 
     // QR-specific
     public string? QrModel { get; set; }

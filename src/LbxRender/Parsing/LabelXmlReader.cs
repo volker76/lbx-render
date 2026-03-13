@@ -148,7 +148,10 @@ internal static class LabelXmlReader
         // Text control
         var control = obj.Element(TextNs + "textControl");
         if (control is not null)
+        {
             te.TextControl = control.Attribute("control")?.Value ?? "FREE";
+            te.Shrink = control.Attribute("shrink")?.Value == "true";
+        }
 
         // Parse spans (text:stringItem elements)
         foreach (var stringItem in obj.Elements(TextNs + "stringItem"))
@@ -315,6 +318,7 @@ internal static class LabelXmlReader
             be.HumanReadable = bcStyle.Attribute("humanReadable")?.Value == "true";
             be.HumanReadableAlignment = bcStyle.Attribute("humanReadableAlignment")?.Value ?? "LEFT";
             be.CheckDigit = bcStyle.Attribute("checkDigit")?.Value == "true";
+            be.Margin = bcStyle.Attribute("margin")?.Value != "false";
         }
 
         // QR-specific

@@ -14,6 +14,7 @@ public class TextElement : LbxElement
     public string Color { get; set; } = "#000000";
     public string TextEffect { get; set; } = "NOEFFECT";
     public string TextControl { get; set; } = "FREE";
+    public bool Shrink { get; set; }
 
     public List<TextSpan> Spans { get; } = [];
 }
