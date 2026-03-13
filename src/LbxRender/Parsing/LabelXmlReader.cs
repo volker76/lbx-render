@@ -14,6 +14,8 @@ internal static class LabelXmlReader
     private static readonly XNamespace DrawNs = "http://schemas.brother.info/ptouch/2007/lbx/draw";
     private static readonly XNamespace ImageNs = "http://schemas.brother.info/ptouch/2007/lbx/image";
     private static readonly XNamespace BarcodeNs = "http://schemas.brother.info/ptouch/2007/lbx/barcode";
+    private static readonly XNamespace CableNs = "http://schemas.brother.info/ptouch/2007/lbx/cable";
+    private static readonly XNamespace TableNs = "http://schemas.brother.info/ptouch/2007/lbx/table";
 
     public static LabelParseResult Parse(Stream stream)
     {
@@ -60,9 +62,28 @@ internal static class LabelXmlReader
                 if (groupObjects is not null)
                     ParseObjectsInto(groupObjects, elements);
             }
+            else if (child.Name == CableNs + "cable")
+            {
+                // Cable elements contain table:cells > table:cell > recognized elements
+                ParseCableInto(child, elements);
+            }
             else
             {
                 var element = ParseElement(child);
+                if (element is not null)
+                    elements.Add(element);
+            }
+        }
+    }
+
+    private static void ParseCableInto(XElement cable, List<LbxElement> elements)
+    {
+        var cells = cable.Descendants(TableNs + "cell");
+        foreach (var cell in cells)
+        {
+            foreach (var cellChild in cell.Elements())
+            {
+                var element = ParseElement(cellChild);
                 if (element is not null)
                     elements.Add(element);
             }
