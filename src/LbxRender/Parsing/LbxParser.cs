@@ -25,6 +25,7 @@ internal static class LbxParser
             label.Properties.MarginRight = result.Properties.MarginRight;
             label.Properties.MarginBottom = result.Properties.MarginBottom;
             label.Properties.Orientation = result.Properties.Orientation;
+            label.Properties.AutoLength = result.Properties.AutoLength;
             label.Properties.MediaType = result.Properties.MediaType;
             label.Properties.PaperColor = result.Properties.PaperColor;
             label.Properties.PaperInk = result.Properties.PaperInk;

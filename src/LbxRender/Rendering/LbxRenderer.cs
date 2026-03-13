@@ -27,6 +27,33 @@ public static class LbxRenderer
             bitmapHeightPt = label.Properties.LabelHeightPt;
         }
 
+        // Auto-length: compute dimensions from content bounding box
+        if (label.Properties.AutoLength && label.Elements.Count > 0)
+        {
+            float contentRight = 0, contentBottom = 0;
+            foreach (var el in label.Elements)
+            {
+                contentRight = Math.Max(contentRight, el.X + el.Width);
+                contentBottom = Math.Max(contentBottom, el.Y + el.Height);
+            }
+
+            // Add small padding (2pt)
+            contentRight += 2f;
+            contentBottom += 2f;
+
+            if (label.Properties.Orientation.Equals("landscape", StringComparison.OrdinalIgnoreCase))
+            {
+                // In landscape, the "long" dimension (width) is auto-sized from content
+                bitmapWidthPt = Math.Min(bitmapWidthPt, contentRight);
+                // Height stays as paper width (tape width)
+            }
+            else
+            {
+                // In portrait, height is auto-sized from content
+                bitmapHeightPt = Math.Min(bitmapHeightPt, contentBottom);
+            }
+        }
+
         var width = Math.Max(1, (int)(bitmapWidthPt * ptToPixel));
         var height = Math.Max(1, (int)(bitmapHeightPt * ptToPixel));
 

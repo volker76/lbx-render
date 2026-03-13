@@ -18,6 +18,7 @@ public class LbxProperties
     public string? PrinterModel { get; set; }
     public string? PaperColor { get; set; }
     public string? PaperInk { get; set; }
+    public bool AutoLength { get; set; }
 
     // Metadata from prop.xml
     public string? Title { get; set; }

@@ -36,21 +36,37 @@ internal static class LabelXmlReader
             props.PaperColor = paper.Attribute("paperColor")?.Value;
             props.PaperInk = paper.Attribute("paperInk")?.Value;
             props.PrinterModel = paper.Attribute("printerName")?.Value;
+            props.AutoLength = paper.Attribute("autoLength")?.Value == "true";
         }
 
-        // Parse objects from pt:objects
+        // Parse objects from pt:objects (the first one is the top-level container)
         var objects = doc.Descendants(PtNs + "objects").FirstOrDefault();
         if (objects is not null)
         {
-            foreach (var child in objects.Elements())
+            ParseObjectsInto(objects, elements);
+        }
+
+        return new LabelParseResult(props, elements);
+    }
+
+    private static void ParseObjectsInto(XElement container, List<LbxElement> elements)
+    {
+        foreach (var child in container.Elements())
+        {
+            if (child.Name == PtNs + "group")
+            {
+                // Recursively extract children from group — flatten into elements list
+                var groupObjects = child.Element(PtNs + "objects");
+                if (groupObjects is not null)
+                    ParseObjectsInto(groupObjects, elements);
+            }
+            else
             {
                 var element = ParseElement(child);
                 if (element is not null)
                     elements.Add(element);
             }
         }
-
-        return new LabelParseResult(props, elements);
     }
 
     private static LbxElement? ParseElement(XElement obj)
